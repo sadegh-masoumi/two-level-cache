@@ -1,33 +1,42 @@
 """
-version 1.1.0
+version 1.2.0
 
 """
 
 import logging
 import time
 import random
-import string
 from multiprocessing import shared_memory
+from datetime import datetime
 
 
 def heavy_computational_function(s: str) -> str:
-    """my heavy computational function"""
+    """my heavy computational function
+
+    note: out put must be 8 byte
+    """
+    # TODO: Build a constant value every 30 seconds for a specific input
+
     time.sleep(0.02)
-    letters = string.ascii_lowercase
-    result_str = ''.join(random.choice(letters) for _ in range(10))
-    return result_str
+    now = datetime.now()
+    if now.second <= 29:
+        return f"X{s}"
+
+    return f"O{s}"
 
 
 def job(shm_name, pk):
     logging.basicConfig(format='%(asctime)s - %(message)s',
-                        level=logging.INFO, filename=f'./logs/jobs{pk}', filemode='w+')
+                        level=logging.INFO, filename=f'./logs/jobs{pk}.txt', filemode='w+')
 
     logging.info(f'🔥 job by id {pk} starting ...')
+    # TODO: use defaultdict for cache
     cache = dict()
-    x = random.randint(1, 901)
-    for item in range(x, x+100):
-        cache[str(item)] = [time.time(),
-                            heavy_computational_function(f'{item}')]
+    # TODO: in this place we can find best value for cache in process when process in running
+    # calculate all cache
+    x = random.randint(1, 900)
+    for item in range(x, x+101):
+        cache[str(item)] = None
 
     logging.info(f"local cache: {cache}")
     while True:
@@ -35,7 +44,7 @@ def job(shm_name, pk):
         request = str(random.randint(1, 1000))
         logging.info(f"📩 request ==> {request} received")
         if request in cache.keys():
-            if time.time() - cache[request][0] < 30:
+            if cache[request] is not None and time.time() - float(cache[request][0]) < 30:
                 # search in local cache
                 logging.info(f'🔥 returning cached result for {request}')
                 print(cache[request][1])
@@ -44,36 +53,27 @@ def job(shm_name, pk):
                 # TODO: update the shared memory for best performance(mabye)
                 # TODO: in this update we can use multithreading to speed up the process
                 x = heavy_computational_function(request)
-                cache[request] = [time.time(), x]
+                cache[request] = [str(time.time()).split('.')[0][-4:], x]
                 print(x)
         else:
             # search in shared memory
             sh_m = shared_memory.ShareableList(name=shm_name)
-            for index, item in enumerate(sh_m):
-                if item == "0":
-                    continue
-                t, value = item.split(':')
-                if value == request:
-                    if time.time() - float(t) < 30:
-                        logging.info(
-                            f'✅ returning result from shared memory for {request}')
-                        print(value)
-                        break
-                    else:
-                        # update cache memory
-                        logging.info(
-                            f"update cache memory for request:{request}")
-                        logging.info(f"cache memory : {cache}")
-                        x = heavy_computational_function(request)
-                        sh_m[index] = f'{time.time()}:{x}'
-                        print(x)
-                        break
-            # not in cache
-            # find in and set to cache
-            else:
+            if sh_m[int(request)] == "0":
+                logging.info(
+                    f"update  shared memory for request: {request}")
+                # calculate value and set to the shared memory cache
                 x = heavy_computational_function(request)
-                logging.info(f"update  shared memory for request: {request}")
-                logging.info(f"shared memory : {sh_m}")
-                for item in enumerate(sh_m):
-                    if item == "0":
-                        sh_m[index] = f'{time.time()}:{x}'
+                now = str(time.time()).split('.')[0][-3:]
+                sh_m[int(request)] = f'{now}:{x}'
+                print(x)
+            else:
+                if float(str(time.time()).split('.')[0][-3:]) - float(sh_m[int(request)].split(':')[0]) < 30:
+                    logging.info(
+                        f'✅ returning result from shared memory for {request}')
+                    print(sh_m[int(request)].split(':')[1])
+                else:
+
+                    x = heavy_computational_function(request)
+                    now = str(time.time()).split('.')[0][-3:]
+                    sh_m[int(request)] = f'{now}:{x}'
+                    print(x)
